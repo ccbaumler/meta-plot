@@ -1,0 +1,835 @@
+---
+title: "gofer plot for meta-analysis"
+---
+
+# ToDo
+
+-   add year in Study
+
+-   add 'Findings' in Study
+
+-   add 'et al' to the Study name
+
+-   add BMI and FOBT with NA population
+
+-   add metabolomic studies
+
+# Background
+
+This script is going to create a gofer plot for metadata
+
+AKA a GOfER diagram (Graphical Overview for Evidence Reviews)
+
+https://github.com/fmmattioni/metabolic
+
+https://fmmattioni.github.io/metabolic/articles/gofer.html
+
+https://twitter.com/will_s_t/status/1090937361251385344/photo/1
+
+## Libraries and data
+
+These are the libraries that I used to understand the process of creating a GOFER plot.
+
+```{r, warning=FALSE, results='hide'}
+library(metabolic)
+
+sample <- metabolic_gofer
+sample
+
+library(curatedMetagenomicData) # A large dataset of curated metadata for metagenomic data
+library(tidyverse)
+tidyverse_packages()
+
+#library(ggplot2) # The Graphical Grammer of plotting in R
+library(ggtext) # Improved text rendering for ggplots
+library(elementalist) # devtools::install_github("teunbrand/elementalist") for more variety of elements. See element_rect_round()
+
+library(patchwork) # Compose plots in specific arrangements
+
+```
+
+Use the curatedMetagenome dataset
+
+```{r}
+crc_sub <- sampleMetadata %>%
+  filter(str_detect(disease, "CRC|adenoma")) %>%
+  group_by(study_name) %>%
+  #subset(is.na(`NCBI_accession`)) %>% #remove the studies with no accessions
+  summarize() %>%
+  as.vector()
+crc_sub[["study_name"]]
+
+sum_cmd <- sampleMetadata %>%
+  filter(.data[["study_name"]] %in% crc_sub[["study_name"]]) %>%
+  select(where(function(x) any(!is.na(x)))) %>%
+  mutate(NCBI_accession = strsplit(as.character(NCBI_accession), ";")) %>%
+  mutate(case_control = case_when(study_condition == "CRC" ~ "case",
+                                  study_condition == "adenoma" ~ "case",
+                                  .default = study_condition)) %>%
+  mutate(name_cond = paste0(study_name, "_", case_control)) %>%
+  # https://stackoverflow.com/questions/41986730/create-new-column-with-dplyr-mutate-and-substring-of-existing-column
+  mutate(study_year = stringr::str_split(study_name, "_", simplify = TRUE)[,2]) %>% 
+  mutate(nice_name = stringr::str_split(study_name, "_", simplify = TRUE)[,1],
+         nice_name = stringr::str_replace(nice_name, "([a-z])([A-Z])$", "\\1, \\2")) %>%
+  #
+  unnest(NCBI_accession, keep_empty = FALSE) %>%
+  filter(!is.na(NCBI_accession)) %>%
+  filter(!is.na(study_condition)) %>%
+  group_by(name_cond) %>%
+  mutate(num_rows = n()) %>%
+  ungroup()
+
+head(sum_cmd)
+```
+
+create a data frame to export only the accession numbers
+
+```{r}
+acc_list <- sum_cmd %>%
+  select(NCBI_accession) %>%
+  unique() 
+
+head(acc_list)
+```
+
+write the data to a txt file without header and quotes for downloading the fastq/a data
+
+```{r}
+write.table(acc_list, file = "curatedmetagenome.crc.acc.list.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+```
+
+```{r}
+sum_cmd %>%
+  select(-where(function(x) any(is.na(x)))) %>%
+  colnames()
+```
+
+```{r}
+
+select_columns_with_row_na_threshold <- function(data, threshold = 0.5) {
+  num_rows <- nrow(data)
+  data %>%
+    select(where(~ sum(!is.na(.)) >= threshold * num_rows)) %>%
+    colnames()
+}
+
+# Example usage:
+# Replace 'your_data_frame' with your actual data frame
+selected_columns <- select_columns_with_row_na_threshold(sum_cmd, threshold = 0.5)
+selected_columns
+
+select_columns_with_group_na_threshold <- function(data, project, threshold = 0.5) {
+  data %>%
+    group_by({{project}}) %>%
+    mutate(num_rows = n()) %>%
+    select(where(~ sum(!is.na(.)) >= threshold * first(num_rows))) %>%
+    colnames()
+}
+
+# Example usage:
+# Replace 'your_data_frame' and 'your_group_column' with your actual data frame and group column name
+#selected_columns2 <- select_columns_with_group_na_threshold(sum_cmd, study_name, threshold = 0.5)
+
+```
+
+```{r}
+results <- sum_cmd %>%
+    group_by(study_name) %>%
+    summarize(across(everything(), ~mean(any(is.na(.))))) %>% #, .names = "contains_na_{.col}")) %>%
+    bind_rows(summarise(.,
+                      across(where(is.numeric), sum),
+                      across(where(is.character), ~"Total")))  
+
+results
+
+# Print the value of each "Total" column
+total_row <- results[nrow(results), ]  # Extract the "Total" row
+
+# Iterate through columns and print their values for the "Total" row
+for (col in colnames(results)) {
+  total_row <- results[nrow(results), ]
+  total_value <- total_row[[col]]
+  cat(paste("Value of", col, ":", total_value), "\n")
+}
+
+
+```
+
+```{r}
+
+results_2 <-  sum_cmd %>%
+    group_by(study_name) %>%
+    summarize(across(everything(), ~mean(all(is.na(.))))) %>%
+    bind_rows(summarise(.,
+                      across(where(is.numeric), sum),
+                      across(where(is.character), ~"Total")))
+
+results_2
+
+# Print the value of each "Total" column
+total_row_2 <- results_2[nrow(results_2), ]  # Extract the "Total" row
+
+# Iterate through columns and print their values for the "Total" row
+for (col in colnames(results_2)) {
+  total_row_2 <- results_2[nrow(results_2), ]
+  total_value_2 <- total_row_2[[col]]
+  cat(paste("Value of", col, ":", total_value_2), "\n")
+}
+
+```
+
+```{r}
+results_3 <-  sum_cmd %>%
+    group_by(study_name) %>%
+    mutate(num_rows = n()) %>%
+    summarize(across(everything(), ~(sum(is.na(.)/num_rows)))) %>%
+    bind_rows(summarise(.,
+                      across(where(is.numeric), sum),
+                      across(where(is.character), ~"Total"))) 
+results_3
+
+
+
+
+
+# Print the value of each "Total" column
+total_row_3 <- results_3[nrow(results_3), ]  # Extract the "Total" row
+
+# Iterate through columns and print their values for the "Total" row
+for (col3 in colnames(results_3)) {
+  total_row_3 <- results_3[nrow(results_3), ]
+  total_value_3 <- total_row_3[[col3]]
+  cat(paste("Value of", col3, ":", total_value_3), "\n")
+}
+
+
+```
+
+```{r}
+sum_cmd %>% #from extract-meta.R
+  group_by(study_name, PMID) |> #, study_condition, disease, body_site, gender
+  summarise(n=n()) |>
+  print(n=Inf)
+```
+
+```{r}
+data_gofer <- sum_cmd %>% 
+  ## arrange study and groups to show in the correct order in the graph
+  dplyr::arrange(dplyr::desc(study_year), dplyr::desc(name_cond)) %>%
+  dplyr::mutate(name_cond = forcats::as_factor(name_cond)) %>%
+  mutate(index = as.numeric(name_cond)) %>%
+  tidyr::nest_legacy(-name_cond) %>%
+  dplyr::rename(study = name_cond)
+
+test_gofer <- sum_cmd %>% 
+  ## arrange study and groups to show in the correct order in the graph
+  dplyr::arrange(dplyr::desc(study_year), dplyr::desc(name_cond)) %>%
+  dplyr::mutate(nice_name = forcats::as_factor(nice_name)) %>%
+  tidyr::nest_legacy(-nice_name) 
+
+head(test_gofer)
+head(data_gofer)
+```
+
+```{r}
+## here we get the number of studies + 1 to show the lines in the graph
+## since we have 10 studies, this is simply 10 + 1
+n_lines <- nrow(data_gofer) + 1
+
+print(data_gofer, n = Inf)
+```
+
+## gofer theme function
+
+```{r}
+theme_gofer <- function(strip_background = "#1f58b5", margins = c(0, 0, 0, 0), line_plot = FALSE) {
+  if(line_plot) {
+    theme_light() +
+      theme(
+        panel.grid.major = element_line(size = 0.5, linetype = 'solid', colour = "black"),
+        panel.grid.minor = element_line(size = 0.5, linetype = 'solid', colour = "black"),
+        axis.text.y = element_text(size = 10),
+        panel.background = element_blank(),
+        panel.border = element_blank(),
+        plot.background = element_blank(),
+        plot.margin = unit(margins, "cm"),
+        axis.title.y = element_blank(),
+        strip.background = element_rect(fill = strip_background),
+        strip.text = element_text(size = 15, colour = "white"),
+        legend.position = "none",
+        axis.ticks = element_line(size = 0.5, linetype = 'solid', colour = "black")
+      )
+  } else {
+    theme_light() +
+      theme(
+        panel.background = element_blank(),
+        panel.border = element_blank(),
+        panel.grid = element_blank(),
+        plot.background = element_blank(),
+        plot.margin = unit(margins, "cm"),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        strip.background = element_rect(fill = strip_background),
+        strip.text = element_text(size = 15, colour = "white"),
+        legend.position = "none"
+      )
+  }
+}
+```
+
+```{r}
+p_grid <- data_gofer %>% 
+  # this is a hack to show a white space between the facet and the plot
+  # this is needed to be able to have subheadings
+  dplyr::add_row(study = NA) %>%
+  ggplot() +
+  ## here although we do not plot the study labels yet, this is needed to ensure
+  ## that plots will be aligned across panels since they always share the same x-axis (study)
+  ggfittext::geom_fit_text(aes(x = study, y = 0, label = ""),
+                           place = "left",
+                           reflow = TRUE,
+                           fontface = "plain",
+                           position = position_dodge(width = 0.7),
+                           show.legend = FALSE,
+                           na.rm = TRUE) +
+  geom_vline(xintercept = seq(from = 1, to = n_lines, by = 1) - 0.5, size = 0.5) +
+  geom_vline(xintercept = seq(from = 1, to = n_lines, by = 2) - 0.5, size = 1) +
+  theme_void() +
+  coord_flip()
+
+p_gap_grid <- data_gofer %>% 
+  # this is a hack to show a white space between the facet and the plot
+  # this is needed to be able to have subheadings
+  dplyr::add_row(study = NA) %>%
+  ggplot() +
+  ## here although we do not plot the study labels yet, this is needed to ensure
+  ## that plots will be aligned across panels since they always share the same x-axis (study)
+  ggfittext::geom_fit_text(aes(x = study, y = 0, label = ""),
+                           place = "left",
+                           reflow = TRUE,
+                           fontface = "plain",
+                           position = position_dodge(width = 0.7),
+                           show.legend = FALSE,
+                           na.rm = TRUE) +
+  geom_vline(xintercept = seq(from = 1, to = n_lines, by = 2) - 0.5, size = 1) +
+  theme_void() +
+  coord_flip()
+
+p_grid
+
+p_gap_grid
+```
+
+```{r}
+p_nice_names <- test_gofer %>%
+  # this is a hack to show a white space between the facet and the plot
+  # this is needed to be able to have subheadings
+  unnest_legacy() %>%
+  select(nice_name) %>%
+  dplyr::add_row(nice_name = NA) %>%
+  group_by(nice_name) %>% 
+  ggplot() +
+  geom_text(aes(x = nice_name, y = 0, label = nice_name),
+                           fontface = "bold",
+                           size = 5,
+                           show.legend = FALSE,
+                           na.rm = TRUE) +
+  coord_flip() 
+  theme_gofer(line_plot = FALSE)
+
+p_name_year_cond <- data_gofer %>%
+  # this is a hack to show a white space between the facet and the plot
+  # this is needed to be able to have subheadings
+  unnest_legacy() %>%
+  select(study) %>%
+  dplyr::add_row(study = NA) %>%
+  group_by(study) %>% 
+  ggplot() +
+  geom_text(aes(x = study, y = 0, label = study), # label = nice_names
+                           fontface = "bold",
+                           size = 5,
+                           show.legend = FALSE,
+                           na.rm = TRUE) +
+  coord_flip() 
+  theme_gofer(line_plot = FALSE)
+?add_row
+p_studies <- data_gofer %>%
+  # this is a hack to show a white space between the facet and the plot
+  # this is needed to be able to have subheadings
+  unnest_legacy() %>%
+  select(study, nice_name, index) %>%
+  #dplyr::add_row(.before = 0) %>% create an na row
+  rbind(data.frame(study = NA, nice_name = NA, index = n_lines)) %>%
+  group_by(study) %>%
+  arrange(index) %>%
+  ggplot() +
+  geom_text(aes(x = index, y = 0, label = ifelse(index %% 2 == 0, nice_name, "")), # label = nice_name
+                           fontface = "bold",
+                           size = 5,
+                           show.legend = FALSE,
+                           na.rm = TRUE) +
+  coord_flip() +
+  theme_gofer(line_plot = FALSE)  
+
+p_nice_names
+p_name_year_cond
+p_studies
+```
+
+```{r}
+layout <- c(
+  area(t = 1, l = 1, b = 3, r = 2), # p_grid (the `r` argument will be adjusted as we go.. it controls the width of the plot)
+  area(t = 1, l = 1, b = 3, r = 1) # p_studies
+)
+
+p_gap_grid +
+  p_studies +
+  plot_layout(nrow = 1, design = layout)
+```
+
+## Preparing Sample
+
+```{r}
+## data preparation
+#?summarise
+data_sample <- data_gofer %>%
+  tidyr::unnest_legacy() %>%
+  dplyr::select(study, body_site, study_condition, country, num_rows) %>%
+  dplyr::distinct_all() %>%
+  dplyr::group_by(study) %>% 
+  dplyr::arrange(dplyr::desc(country)) %>%
+  summarise_all(~ toString(unique(.))) %>%
+  #dplyr::mutate_all(~ str_replace(., ", ", "\n"))%>%
+  dplyr::arrange(dplyr::desc(study)) %>%
+  dplyr::mutate(fill = dplyr::case_when(
+                  study_condition == "CRC" ~ "#fdb863",
+                  str_detect(study_condition, "adenoma") ~ "#e08214",
+                  study_condition == "control" ~ "#355c7d"
+                )) %>%
+  dplyr::mutate(across(all_of(c("num_rows")), as.numeric)) %>%
+  dplyr::mutate(percentage = num_rows/max(num_rows)) %>%
+  dplyr::mutate(
+    dummy_body_site = 0.5,
+    dummy_study_condition = 2,
+    dummy_country = 3.5,
+    dummy_num_rows = 5
+  ) |>
+  dplyr::as_tibble() |>
+  dplyr::add_row(study = NA)
+
+
+data_sample
+```
+
+```{r}
+p_sample <- data_sample %>% 
+  ggplot() +
+  ## body_site
+  geom_text(aes(x = study, y = dummy_body_site, label = body_site),
+                     fontface = "plain",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  ## body_site subheading
+  geom_text(aes(x = NA, y = dummy_body_site),
+                     label = "Sample",
+                     size = 5,
+                     fontface = "bold",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  ## study_condition
+  geom_label(aes(x = study, y = dummy_study_condition, label = study_condition, fill = fill),
+                     color = "white",
+                     fontface = "bold",
+                     size = 4,
+                     na.rm = TRUE) +
+  ## study_condition subheading
+  geom_text(aes(x = NA, y = dummy_study_condition),
+                     label = "Condition",
+                     size = 5,
+                     fontface = "bold",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  ## Country
+  geom_text(aes(x = study, y = dummy_country, label = country),
+                      fontface = "plain",
+                      show.legend = FALSE,
+                      na.rm = TRUE) +
+  ## Country subheading
+  geom_text(aes(x = NA, y = dummy_country),
+                     label = "Country",
+                     size = 5,
+                     fontface = "bold",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  ## Sample_count
+  geom_segment(aes(x = study, y = dummy_num_rows - (percentage/2), xend = study, yend = dummy_num_rows + (percentage/2)),
+            colour = "#e08214", na.rm = TRUE, size = 4.5, alpha = 0.25) +
+  geom_text(aes(x = study, y = dummy_num_rows, label = num_rows),
+                      fontface = "plain",
+                      show.legend = FALSE,
+                      na.rm = TRUE) +
+  ## Country subheading
+  geom_text(aes(x = NA, y = dummy_num_rows),
+                     label = "Count",
+                     size = 5,
+                     fontface = "bold",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  coord_flip() +
+  scale_fill_identity() +
+  ## the following will ensure that there is some extra space at the beginning and at the end
+  ylim(0, 5.5) +
+  #facet_wrap(~ "Sample") +
+  theme_gofer()
+
+p_sample
+```
+
+```{r}
+layout <- c(
+  area(t = 1, l = 1, b = 3, r = 3), # p_gap_grid (the `r` argument will be adjusted as we go.. it controls the width of the plot)
+  area(t = 1, l = 1, b = 3, r = 1), # p_studies
+  area(t = 1, l = 2, b = 3, r = 3),  # p_grid
+  area(t = 1, l = 2, b = 3, r = 3)  # p_sample
+)
+
+p_gap_grid +
+  p_studies +
+  p_grid +
+  p_sample +
+  plot_layout(nrow = 1, design = layout)
+```
+
+## Preparing Age data
+
+```{r}
+## data preparation
+data_age <- data_gofer %>%
+  tidyr::unnest_legacy() %>%
+  dplyr::select(study, age) %>%
+  filter(!is.na(age)) %>%
+  dplyr::group_by(study) %>%
+  dplyr::arrange(dplyr::desc(study)) %>%
+  dplyr::summarise(age_median = stats::median(age), age_sd = stats::sd(age), age_min = min(age), age_max = max(age)) %>%
+  #dplyr::select(-age) |>
+  dplyr::as_tibble() |>
+  # this is a hack to show a white space between the facet and the plot
+  # this is needed to be able to have subheadings
+  dplyr::add_row(study = NA)
+
+data_age
+```
+
+```{r}
+p_age <- data_age %>%
+  ggplot(aes(x = study, y = age_median, fill = age_median, color = age_median, label = as.integer(age_median))) +
+  geom_segment(aes(x = study, y = age_min, xend = study, yend = age_max), colour = "black", na.rm = TRUE) +
+  geom_errorbar(aes(ymin=age_median-age_sd, ymax=age_median+age_sd), size = 2, width=.2, na.rm = TRUE) +
+  geom_point(shape = 21, size = 7, color = "black", stroke = 2, na.rm = TRUE) +
+  geom_point(y = data_age$age_max, shape = "l", size = 7, color = "black", na.rm = TRUE) +
+  geom_point(y = data_age$age_min, shape = "l", size = 7, color = "black", na.rm = TRUE) +
+  geom_text(color = "white", size = 4, fontface = "bold", na.rm = TRUE) +
+  ## Hack to delete lines above
+  geom_rect(aes(xmin = n_lines - 0.45, xmax = Inf, ymin = -Inf, ymax = Inf), fill = "white", colour = "white") +
+  geom_text(aes(x = NA, y = 60),
+            label = "Age (yr)",
+            size = 5,
+            fontface = "bold",
+            color = "black",
+            show.legend = FALSE,
+            na.rm = TRUE) +
+  scale_color_gradient(low = "#9e9ac8", high = "#3f007d") +
+  scale_fill_gradient(low = "#9e9ac8", high = "#3f007d") +
+  coord_flip() +
+  scale_x_discrete(breaks = NULL) + #removes the NA line and study names
+  labs(y = "") +
+  #ylim(20, 95)
+  theme_gofer(line_plot = TRUE)
+
+p_age
+```
+
+```{r}
+layout <- c(
+  area(t = 1, l = 1, b = 3, r = 4), # p_grid (the `r` argument will be adjusted as we go.. it controls the width of the plot)
+  area(t = 1, l = 1, b = 3, r = 1), # p_studies
+  area(t = 1, l = 2, b = 3, r = 3), # p_sample
+  area(t = 1, l = 4, b = 3, r = 4)  # p _age
+)
+
+p_grid +
+  p_studies +
+  p_sample +
+  p_age +
+  plot_layout(nrow = 1, design = layout, guides = "keep")
+```
+
+## Preparing Sex data
+
+```{r}
+## data preparation
+data_sex <- data_gofer %>%
+  tidyr::unnest_legacy() %>%
+  dplyr::select(study, gender) %>%
+  filter(!is.na(gender)) %>%
+  dplyr::rename(sex = gender) %>%
+  dplyr::count(study, sex) %>%
+  dplyr::group_by(study) %>%
+  dplyr::arrange(dplyr::desc(study)) %>%
+
+  #dplyr::summarise(gender_total = n(),
+   #                gender_male = length(which(gender == 'male')),
+    #               gender_female = length(which(gender == 'female'))) %>%
+  dplyr::mutate(percentage = proportions(n)) %>%
+  #dplyr::ungroup() |>
+  dplyr::as_tibble() |>
+  # this is a hack to show a white space between the facet and the plot
+  # this is needed to be able to have subheadings
+  dplyr::add_row(study = NA)
+
+# Calculate the maximum percentage value in your data
+max_percentage <- max(data_sex$percentage, na.rm = TRUE)
+max_percentage
+
+data_sex
+```
+
+```{r}
+p_sex <- data_sex %>%
+  ggplot(aes(x = study, y = percentage, fill = sex, label = scales::percent(percentage, accuracy =1))) +
+  geom_col(position = 'stack', width = 0.4, na.rm = TRUE) +
+#  geom_text(position = position_fill(vjust = 0.5), #center the percent in the middle of its bar
+  geom_text(position = position_stack(vjust = 0.45),  # Use position_stack
+            color = "white",
+            size = 3.5,
+            fontface = "bold",
+            na.rm = TRUE) +
+  geom_text(data = filter(data_sex, sex == 'male'),
+            aes(x = study, y = 0, label = "M"),
+            y = -0.05,
+            size = 4,
+            fontface = "bold",
+            color = "black",
+            na.rm = TRUE) +
+  geom_text(data = filter(data_sex, sex == 'female'),
+            aes(x = study, y = 0, label = "F"),
+            #hjust = -3.5,
+            y = 1.05,
+            size = 4,
+            fontface = "bold",
+            color = "black",
+            na.rm = TRUE) +
+    scale_x_discrete(breaks = NULL) +
+  scale_fill_manual(values = c("#6a51a3", "#9e9ac8")) +
+  geom_rect(aes(xmin = n_lines - 0.45, xmax = Inf, ymin = -Inf, ymax = Inf), fill = "white", colour = "white", na.rm = TRUE) +
+  geom_text(aes(x = NA, y = 0.5),
+            label = "Sex (%)",
+            size = 5,
+            fontface = "bold",
+            color = "black",
+            show.legend = FALSE,
+            na.rm = TRUE) +
+  coord_flip(ylim = c(-.1, 1.1)) + # ylim creates a buffer for the "M" and "F"
+  #labs(y = "Sex") +
+  #facet_wrap(~ "Sex") +
+  theme_gofer(line_plot = FALSE)
+
+p_sex
+```
+
+```{r}
+layout <- c(
+  area(t = 1, l = 1, b = 3, r = 5), # p_grid (the `r` argument will be adjusted as we go.. it controls the width of the plot)
+  area(t = 1, l = 1, b = 3, r = 1), # p_studies
+  area(t = 1, l = 2, b = 3, r = 3), # p_sample
+  area(t = 1, l = 4, b = 3, r = 4), # p_age
+  area(t = 1, l = 5, b = 3, r = 5)  # p_sex
+)
+
+p_grid +
+  p_studies +
+  p_sample +
+  p_age +
+  p_sex +
+  plot_layout(nrow = 1, design = layout, guides = "keep")
+```
+
+## Can I join the existing work into a fancy plot?
+
+```{r}
+
+library(ggtext)
+
+layout <- c(
+  area(t = 1, l = 1, b = 3, r = 2), # p_grid (the `r` argument will be adjusted as we go.. it controls the width of the plot)
+  area(t = 1, l = 1, b = 3, r = 1), # p_age
+  area(t = 1, l = 2, b = 3, r = 2)  # p_sex
+)
+
+example <- p_grid +
+  p_sex +
+  p_age +
+  plot_annotation(
+    title = 'Surprise',
+    caption = 'By Colton Baumler',
+    theme = theme(plot.title = element_textbox_simple(
+      color = 'white', fill = 'blue',
+      margin = margin(t = 5, b = 5),
+      padding = margin(t = 5, b = 5)
+    ))) +
+  plot_layout(nrow = 1, design = layout, guides = "keep")
+example
+
+
+p_sample + example
+
+```
+
+```{r}
+library(gridExtra)
+
+pp <- grid.arrange(p_sex, p_age, ncol=2)
+
+#library(cowplot)
+#https://stackoverflow.com/questions/75551081/how-to-arrange-multiple-plots-in-using-cowplot-and-ggplot  
+
+```
+
+```{r, warning=FALSE}
+# Title panel
+t_study <- ggplot() + labs(title = "Study") +
+  theme(plot.background = element_rect(fill = "purple"),
+        panel.background = element_blank(),
+        plot.title = element_text(size = 20, 
+                                  vjust = -2.5, 
+                                  face = "bold", 
+                                  color = "white"))
+
+t_sample <- ggplot() + labs(title = "Sample") +
+  theme(plot.background = element_rect(fill = "#fe9929"),
+        panel.background = element_blank(),
+        plot.title = element_text(size = 20, 
+                                  vjust = -2.5, 
+                                  face = "bold", 
+                                  color = "white"))
+
+t_char <- ggplot() + labs(title = "Participant characteristics") +
+  theme(plot.background = element_rect_round(fill = "#807dba",
+                                       color = "white",
+                                       size = 2,
+                                      radius = unit(8, "pt")),
+        #plot.margin = margin(2, 2, 2, 2, "pt"),
+        panel.background = element_blank(),
+        plot.title = element_text(size = 20, 
+                                  #vjust = -2.5,
+                                  hjust = 0.5,
+                                  margin(t = 100, b = 20, unit = "pt"),
+                                  face = "bold", 
+                                  color = "white"))
+t_char
+
+
+#?area
+
+
+layout <- c(
+  area(t = 1, l = 1, b = 1, r = 1), # t_study
+  area(t = 1, l = 2, b = 1, r = 3), # t_sample
+  area(t = 1, l = 4, b = 1, r = 5), # t_char
+  area(t = 2, l = 1, b = 10, r = 5), # p_grid (the `r` argument will be adjusted as we go.. it controls the width of the plot)
+  area(t = 2, l = 1, b = 10, r = 1), # p_studies
+  area(t = 2, l = 2, b = 10, r = 3), # p_sample
+  area(t = 2, l = 4, b = 10, r = 4), # p_age
+  area(t = 2, l = 5, b = 10, r = 5)  # p_sex
+)
+
+t_study + 
+  t_sample +
+  t_char +
+  p_grid +
+  p_studies +
+  p_sample +
+  p_age +
+  p_sex +
+    plot_annotation(
+    title = 'Surprise',
+    caption = 'By Colton Baumler') +
+  plot_layout(nrow = 1, design = layout, guides = "keep") 
+```
+
+Try a function?
+
+```{r, warning=FALSE}
+#library(cowplot)
+
+# Create a custom title panel function
+custom_title_panel <- function(title, fill_color) {
+  ggplot() +
+    #labs(title = title) +
+    theme_light() +
+    theme(
+      panel.background = element_blank(),
+      panel.border = element_blank(),
+      panel.grid = element_blank(),
+      plot.background = element_blank(),
+      axis.title = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      strip.background = element_rect(fill = fill_color),  # Adjust the fill color
+      strip.text = element_text(size = 15, colour = "white"),
+      legend.position = "none"
+    ) +
+    geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
+              fill = fill_color, color = "white", size = 1, show.legend = FALSE) +
+    annotate("text", x = 0.5, y = 0.5, label = title, size = 10, color = "white", fontface = "bold")
+}
+
+title_panel <- function(title, fill_color) {
+  ggplot() + labs(title = title) +
+  theme(plot.background = element_rect_round(fill = fill_color,
+                                       color = "white",
+                                       size = 2,
+                                      radius = unit(8, "pt")),
+        #plot.margin = margin(2, 2, 2, 2, "pt"),
+        panel.background = element_blank(),
+        plot.title = element_text(size = 20, 
+                                  hjust = 0.5,
+                                  vjust = -1.0,
+                                  face = "bold", 
+                                  color = "white"))
+}
+
+# Create title panels with rounded rectangles
+t_study <- title_panel("Study", "purple")
+t_sample <- title_panel("Sample", "#fe9929")
+t_char <- title_panel("Participant characteristics", "#807dba") #"#41ab5d")
+
+layout <- c(
+  area(t = 1, l = 1, b = 1, r = 1), # t_study
+  area(t = 1, l = 2, b = 1, r = 3), # t_sample
+  area(t = 1, l = 4, b = 1, r = 5), # t_char
+  area(t = 2, l = 1, b = 35, r = 5), # p_gap_grid studies (the `r` argument will be adjusted as we go.. it controls the width of the plot)
+  area(t = 2, l = 1, b = 35, r = 1), # p_studies
+    area(t = 2, l = 2, b = 35, r = 5), # p_grid 
+  area(t = 2, l = 2, b = 35, r = 3), # p_sample
+  area(t = 2, l = 4, b = 35, r = 4), # p_age
+  area(t = 2, l = 5, b = 35, r = 5)  # p_sex
+)
+
+t_study + 
+  t_sample +
+  t_char + 
+  p_gap_grid +
+  p_studies +
+  p_grid +
+  p_sample +
+  p_age +
+  p_sex +
+    plot_annotation(
+    title = 'Surprise',
+    caption = 'By Colton Baumler') +
+  plot_layout(nrow = 1, design = layout, guides = "keep") 
+  
+  
+```

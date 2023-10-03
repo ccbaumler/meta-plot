@@ -1,0 +1,566 @@
+---
+title: "Visualize the metadata across a meta-analysis"
+author: "Colton Baumler"
+format: 
+  html:
+    fig-dpi: 600
+---
+
+# ToDo
+
+-   add year in Study
+
+-   add 'Findings' in Study
+
+-   add 'et al' to the Study name
+
+-   add BMI and FOBT with NA population
+
+-   add metabolomic studies
+
+-   include more information (text and image) in background
+
+# Background
+
+This report is an overview of my attempts at creating a visually appealing metadata plot for meta-analyses. My inspiration came from the sources below that created a GOfER diagram (Graphical Overview for Evidence Reviews).
+
+https://fmmattioni.github.io/metabolic/articles/gofer.html
+
+https://twitter.com/will_s_t/status/1090937361251385344/photo/1
+
+# Library of packages
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+library(metabolic) # An example dataset and package created by Mattioni. See background.
+
+library(curatedMetagenomicData) # A large dataset of curated metadata for metagenomic data
+library(tidyverse) # A collection of packages for 
+tidyverse_packages()
+
+library(ggtext) # Improved text rendering for ggplots
+library(elementalist) # devtools::install_github("teunbrand/elementalist") for more variety of elements. See element_rect_round()
+
+library(patchwork) # Compose plots in specific arrangements
+library(gt) # For truly beautiful tables
+library(gtExtras) # For even prettier tables!!!
+```
+
+# Examine the datasets
+
+## Curated datasets
+
+Reference/footnote to background https://github.com/fmmattioni/metabolic
+
+```{css}
+/*| echo: false */
+.vscrolling {
+  max-height: 500px;
+  overflow-y: scroll;
+}
+```
+
+```{r, echo=TRUE, eval=FALSE}
+metabolic_gofer %>% gt::gt()
+```
+
+```{r, echo=FALSE}
+#| class: vscrolling
+metabolic_gofer %>% gt::gt()
+```
+
+## Raw datasets
+
+Use the curatedMetagenome dataset **Add details and link**
+
+I want to understand the dataset a bit more. Using `head()` and `tail()` allows me to see a default number of lines at the beginning or end of the file, respectively. By default, the value `n`, or number of lines shown, is `6L`. This arguments value may be changed by calling it specifically with `n = 10L`, or by position (simply `10L` in the second position).
+
+```{r}
+head(sampleMetadata, n = 10L) %>% gt::gt()
+```
+
+```{r}
+tail(sampleMetadata, 10L) %>% gt::gt()
+```
+
+While viewing the beginning and end of a dataset is useful, for another look into the data we can `sample()` by a set number of rows returned from `nrow()` of the dataset. I want to see what 30 random rows across the dataset looked like in the data. I nested the argument `nrows` within `sample` within the first position of `[]`. Simply, I counted the total number of rows in `sampleMetadata` with `nrows`, selected `30` unique row numbers at random with `sample` within the domain of row numbers as a vector, and take the vector of the sampled row numbers as the input of row indices in `[]` (i.e. `sampleMetadata[rownumbers, colnumbers]`).
+
+```{r, eval=FALSE, echo=TRUE}
+sampleMetadata[sample(nrow(sampleMetadata), 30), ] %>% gt::gt()
+```
+
+```{r}
+#| class: vscrolling
+#| echo: false
+sampleMetadata[sample(nrow(sampleMetadata), 30), ] %>% gt::gt()
+```
+
+This shows that there are many missing values within the columns. Some studies must require specific experimental metadata to be recorded that are unnecessary in other studies (e.g. stool_texture, fasting_glucose, or previous_therapy).
+
+But, how many studies are included in the `r nrow(sampleMetadata)` rows? Turns out there are `r sampleMetadata %>% group_by(study_name) |> summarise() |> nrow()` total studies included across the data. Of these `r sampleMetadata %>% group_by(study_name) |> summarise() |> nrow()`, there are `r sampleMetadata %>% group_by(study_condition) |> summarise() |> nrow()` experimental conditions the studies were testing. Interestingly, some of these conditions are not recorded and *most beautifully* of all there is a single entry for control variables (see the table below)!
+
+```{r, eval=FALSE, echo=TRUE}
+sampleMetadata %>%
+  group_by(study_condition) %>%
+  summarise(n = n()) %>%
+  dplyr::mutate(percentage = round(proportions(n) * 100, 4))
+```
+
+```{r}
+#| class: vscrolling
+#| echo: false
+sampleMetadata %>%
+  group_by(study_condition) %>%
+  na.pass() %>%
+  summarise(n = n()) %>%
+  dplyr::mutate(percentage = round(proportions(n) * 100, 4)) %>%
+  gt::gt(rowname_col = "study_condition") %>%
+  tab_header(
+    title = md("**Experimental conditions of studies**"),
+    subtitle = md("By *count* and *proportion*")
+  ) |>
+  tab_stubhead(label = "Condition") |>
+  grand_summary_rows(
+    columns = c(n, percentage),
+    fns = list(
+      min ~ min(.),
+      max ~ max(.),
+      tot ~ sum(.)
+    ),
+    fmt = ~ fmt_number(., decimals = 0, use_seps = FALSE)
+  ) |>
+  gt_highlight_rows(rows = study_condition == "CRC",
+                    fill = "lightpink",
+                    bold_target_only = TRUE,
+                    target_col = study_condition) |>
+  gt_highlight_rows(rows = study_condition == "adenoma",
+                    fill = "lightpink",
+                    bold_target_only = TRUE,
+                    target_col = study_condition) |>
+  gt_highlight_rows(rows = study_condition == "control",
+                    fill = "lightgrey",
+                    bold_target_only = TRUE,
+                    target_col = study_condition) |>
+  gt_highlight_rows(rows = is.na(study_condition),
+                    fill = "lightgrey",
+                    bold_target_only = TRUE,
+                    target_col = study_condition)
+
+```
+\
+\
+As shown above, there are study conditions for both, `CRC` and `adenoma`. But, how many of the included studies are investigating colorectal cancer (what I am focusing on at the moment) and what are the study names? `r sampleMetadata %>% filter(str_detect(disease, "CRC|adenoma")) %>% group_by(study_name) %>% summarize() %>% nrow()` studies named `r sampleMetadata %>% filter(str_detect(disease, "CRC|adenoma")) %>% group_by(study_name) %>% summarize() %>% .[[1]]` are testing characteristics of colorectal cancer through metagenomic experiments within this data (totalling to `r sampleMetadata %>% filter(str_detect(disease, "CRC|adenoma")) %>% nrow()` rows of the dataframe, or `r round((sampleMetadata %>% filter(str_detect(disease, "CRC|adenoma")) %>% nrow())/(sampleMetadata %>% nrow()), 2)*100`% of the data).
+
+Using a vector, or list, of these specific studies, I subset the dataframe into a CRC-focused dataset.
+
+```{r}
+crc_subset <- sampleMetadata %>%
+  filter(str_detect(disease, "CRC|adenoma")) %>%
+  group_by(study_name) %>%
+  summarize() %>%
+  as.vector()
+
+sum_cmd <- sampleMetadata %>%
+  filter(.data[["study_name"]] %in% crc_subset[["study_name"]]) %>%
+  select(where(function(x) any(!is.na(x)))) %>%
+  mutate(NCBI_accession = strsplit(as.character(NCBI_accession), ";")) %>% #necessary as some acc are nested
+  mutate(case_control = case_when(study_condition == "CRC" ~ "case",
+                                  study_condition == "adenoma" ~ "case",
+                                  .default = study_condition)) %>%
+  mutate(name_cond = paste0(study_name, "_", case_control)) %>%
+  mutate(study_year = stringr::str_split(study_name, "_", simplify = TRUE)[,2]) %>% 
+  mutate(nice_name = stringr::str_split(study_name, "_", simplify = TRUE)[,1],
+         nice_name = stringr::str_replace(nice_name, "([a-z])([A-Z])$", "\\1, \\2")) %>%
+  unnest(NCBI_accession, keep_empty = FALSE) %>%
+  filter(!is.na(NCBI_accession)) %>%
+  filter(!is.na(study_condition)) %>%
+  group_by(name_cond) %>%
+  mutate(num_rows = n()) %>%
+  ungroup()
+```
+
+```{r, eval=FALSE, echo=TRUE}
+sum_cmd[sample(nrow(sum_cmd), 30), ] %>% gt::gt()
+```
+\
+```{r}
+#| class: vscrolling
+#| echo: false
+sum_cmd[sample(nrow(sum_cmd), 30), ] %>% gt::gt()
+```
+
+# Final plot
+
+```{r, warning=FALSE, out.width="100%"}
+#| fig-align: center
+# Overall theme function
+theme_gofer <- function(strip_background = "#1f58b5", margins = c(0, 0, 0, 0), line_plot = FALSE) {
+  if(line_plot) {
+    theme_light() +
+      theme(
+        panel.grid.major = element_line(size = 0.5, linetype = 'solid', colour = "black"),
+        panel.grid.minor = element_line(size = 0.5, linetype = 'solid', colour = "black"),
+        axis.text.y = element_text(size = 10),
+        panel.background = element_blank(),
+        panel.border = element_blank(),
+        plot.background = element_blank(),
+        plot.margin = unit(margins, "cm"),
+        axis.title.y = element_blank(),
+        strip.background = element_rect(fill = strip_background),
+        strip.text = element_text(size = 15, colour = "white"),
+        legend.position = "none",
+        axis.ticks = element_line(size = 0.5, linetype = 'solid', colour = "black")
+      )
+  } else {
+    theme_light() +
+      theme(
+        panel.background = element_blank(),
+        panel.border = element_blank(),
+        panel.grid = element_blank(),
+        plot.background = element_blank(),
+        plot.margin = unit(margins, "cm"),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        strip.background = element_rect(fill = strip_background),
+        strip.text = element_text(size = 15, colour = "white"),
+        legend.position = "none"
+      )
+  }
+}
+
+theme_gofer2 <- function(strip_background = "#1f58b5", margins = c(0, 0, 0, 0), line_plot = FALSE, na_rm = FALSE) {
+  base_theme <- theme(
+    panel.background = element_blank(),
+    panel.border = element_blank(),
+    panel.grid = element_blank(),
+    plot.background = element_blank(),
+    plot.margin = unit(margins, "cm"),
+    strip.background = element_rect(fill = strip_background),
+    strip.text = element_text(size = 15, colour = "white"),
+    legend.position = "none"
+  )
+  
+  if (na_rm) {
+    base_theme <- base_theme + theme(
+      axis.title = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank()
+    )
+  }
+  
+  if (line_plot) {
+    base_theme <- base_theme + theme(
+      panel.grid.major = element_line(size = 0.5, linetype = 'solid', colour = "black"),
+      panel.grid.minor = element_line(size = 0.5, linetype = 'solid', colour = "black"),
+      axis.text.y = element_text(size = 10),
+      axis.ticks = element_line(size = 0.5, linetype = 'solid', colour = "black")
+    )
+  }
+  
+  return(base_theme)
+}
+
+
+
+# Function to simplify title pane creation
+title_panel <- function(title, fill_color) {
+  ggplot() + labs(title = title) +
+  theme(plot.background = element_rect_round(fill = fill_color,
+                                       color = "white",
+                                       size = 2,
+                                      radius = unit(8, "pt")),
+        panel.background = element_blank(),
+        plot.title = element_text(size = 15,
+                                  hjust = 0.5,
+                                  vjust = -0.5, 
+                                  face = "bold", 
+                                  color = "white",
+                                  )
+        )
+}
+
+data_gofer <- sampleMetadata %>%
+  filter(.data[["study_name"]] %in% crc_subset[["study_name"]]) %>%
+  select(where(function(x) any(!is.na(x)))) %>%
+  mutate(NCBI_accession = strsplit(as.character(NCBI_accession), ";")) %>%
+  mutate(case_control = case_when(study_condition == "CRC" ~ "case",
+                                  study_condition == "adenoma" ~ "case",
+                                  .default = study_condition)) %>%
+  mutate(name_cond = paste0(study_name, "_", case_control)) %>%
+  mutate(study_year = stringr::str_split(study_name, "_", simplify = TRUE)[,2]) %>% 
+  mutate(nice_name = stringr::str_split(study_name, "_", simplify = TRUE)[,1],
+         nice_name = stringr::str_replace(nice_name, "([a-z])([A-Z]*)$", "\\1, \\2 et al")) %>%
+  #
+  unnest(NCBI_accession, keep_empty = FALSE) %>%
+  filter(!is.na(NCBI_accession)) %>%
+  filter(!is.na(study_condition)) %>%
+  group_by(name_cond) %>%
+  mutate(num_rows = n()) %>%
+  ungroup() %>% 
+  ## arrange study and groups to show in the correct order in the graph
+  dplyr::arrange(dplyr::desc(name_cond), dplyr::desc(study_condition)) %>%
+  dplyr::mutate(name_cond = forcats::as_factor(name_cond)) %>%
+  mutate(index = as.numeric(name_cond)) %>%
+  tidyr::nest_legacy(-name_cond) %>%
+  dplyr::rename(study = name_cond)
+
+n_lines <- nrow(data_gofer) + 1
+
+# Make the grid
+p_grid <- data_gofer %>% 
+  dplyr::add_row(study = NA) %>%
+  ggplot() +
+  ggfittext::geom_fit_text(aes(x = study, y = 0, label = ""),
+                           place = "left",
+                           reflow = TRUE,
+                           fontface = "plain",
+                           position = position_dodge(width = 0.7),
+                           show.legend = FALSE,
+                           na.rm = TRUE) +
+  geom_vline(xintercept = seq(1, n_lines, 1)  - 0.5) +
+  theme_void() +
+  coord_flip()
+
+p_gap_grid <- data_gofer %>% 
+  dplyr::add_row(study = NA) %>%
+  ggplot() +
+  ## here although we do not plot the study labels yet, this is needed to ensure
+  ## that plots will be aligned across panels since they always share the same x-axis (study)
+  ggfittext::geom_fit_text(aes(x = study, y = 0, label = ""),
+                           place = "left",
+                           reflow = TRUE,
+                           fontface = "plain",
+                           position = position_dodge(width = 0.7),
+                           show.legend = FALSE,
+                           na.rm = TRUE) +
+  geom_vline(xintercept = seq(from = 1, to = n_lines, by = 2) - 0.5, size = 1) +
+  theme_void() +
+  coord_flip()
+
+# Gather the studies
+p_studies <- data_gofer %>%
+  unnest_legacy() %>%
+  select(study, nice_name, index) %>%
+  rbind(data.frame(study = NA, nice_name = NA, index = n_lines)) %>%
+  group_by(study) %>%
+  arrange(index) %>%
+  ggplot() +
+geom_text(aes(x = index, y = 0, label = ifelse(index %% 2 == 0, str_wrap(nice_name, 15), "")),
+                           fontface = "bold",
+                           size = 2.5,
+                           show.legend = FALSE,
+                           na.rm = TRUE) +
+  coord_flip() +
+  theme_gofer(line_plot = FALSE) 
+
+# Prepare the sample data
+data_sample <- data_gofer %>%
+  tidyr::unnest_legacy() %>%
+  dplyr::select(study, body_site, study_condition, country, num_rows) %>%
+  dplyr::distinct_all() %>%
+  dplyr::group_by(study) %>% 
+  dplyr::arrange(dplyr::desc(country)) %>%
+  summarise_all(~ toString(unique(.))) %>%
+  dplyr::arrange(dplyr::desc(study)) %>%
+  dplyr::mutate(fill = dplyr::case_when(
+                  study_condition == "CRC" ~ "#fdb863",
+                  str_detect(study_condition, "adenoma") ~ "#e08214",
+                  study_condition == "control" ~ "#355c7d"
+                )) %>%
+  dplyr::mutate(across(all_of(c("num_rows")), as.numeric)) %>%
+  dplyr::mutate(percentage = num_rows/sum(num_rows)) %>%
+  dplyr::mutate(
+    dummy_body_site = 0.15,
+    dummy_study_condition = 1.5,
+    dummy_country = 3.35,
+    dummy_num_rows = 4.65
+  ) |>
+  dplyr::as_tibble() |>
+  dplyr::add_row(study = NA)
+
+# Create sample graph
+p_sample <- data_sample %>% 
+  ggplot() +
+  ## Site
+  geom_text(aes(x = study, y = dummy_body_site, label = body_site),
+                     fontface = "plain",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  ## Site subheading
+  geom_text(aes(x = NA, y = dummy_body_site),
+                     label = "Type",
+                     size = 3,
+                     fontface = "bold",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  ## Condition
+  geom_label(aes(x = study, y = dummy_study_condition, label = study_condition, fill = fill),
+                     color = "white",
+                     fontface = "bold",
+                     size = 2,
+                     na.rm = TRUE) +
+  ## Condition subheading
+  geom_text(aes(x = NA, y = dummy_study_condition),
+                     label = "Condition",
+                     size = 3,
+                     fontface = "bold",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  ## Country
+  geom_text(aes(x = study, y = dummy_country, label = country),
+                      fontface = "plain",
+                      show.legend = FALSE,
+                      na.rm = TRUE) +
+  ## Country subheading
+  geom_text(aes(x = NA, y = dummy_country),
+                     label = "Country",
+                     size = 3,
+                     fontface = "bold",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  ## Sample_count
+  geom_segment(aes(x = study, y = dummy_num_rows - (percentage*1.5), xend = study, yend = dummy_num_rows + (percentage*1.5)),
+            colour = "#e08214", na.rm = TRUE, size = 5, alpha = 0.25) +
+  geom_text(aes(x = study, y = dummy_num_rows, label = num_rows),
+                      fontface = "plain",
+                      show.legend = FALSE,
+                      na.rm = TRUE) +
+  ## Count subheading
+  geom_text(aes(x = NA, y = dummy_num_rows),
+                     label = "Count",
+                     size = 3,
+                     fontface = "bold",
+                     show.legend = FALSE,
+                     na.rm = TRUE) +
+  coord_flip() +
+  scale_fill_identity() +
+  ylim(0, 5) +
+  theme_gofer()
+
+## Preparing age data
+data_age <- data_gofer %>%
+  tidyr::unnest_legacy() %>%
+  dplyr::select(study, age) %>%
+  filter(!is.na(age)) %>%
+  dplyr::group_by(study) %>%
+  dplyr::arrange(dplyr::desc(study)) %>%
+  dplyr::summarise(age_median = stats::median(age), age_sd = stats::sd(age), age_min = min(age), age_max = max(age)) %>%
+  dplyr::as_tibble() |>
+  dplyr::add_row(study = NA)
+
+# Creating age plot
+p_age <- data_age %>%
+  ggplot(aes(x = study, y = age_median, fill = age_median, color = age_median, label = as.integer(age_median))) +
+  geom_segment(aes(x = study, y = age_min, xend = study, yend = age_max), colour = "black", na.rm = TRUE) +
+  geom_errorbar(aes(ymin=age_median-age_sd, ymax=age_median+age_sd), size = 2, width=.5, na.rm = TRUE) +
+  geom_point(shape = 21, size = 3.5, color = "black", stroke = 2, na.rm = TRUE) +
+  geom_point(y = data_age$age_max, shape = "l", size = 5, color = "black", na.rm = TRUE) +
+  geom_point(y = data_age$age_min, shape = "l", size = 5, color = "black", na.rm = TRUE) +
+  geom_text(color = "white", size = 2, fontface = "bold", na.rm = TRUE) +
+  geom_rect(aes(xmin = n_lines-0.4, xmax = Inf, ymin = -Inf, ymax = Inf), fill = "white", colour = "white") +
+  geom_text(aes(x = NA, y = 60),
+            label = "Age",
+            size = 3,
+            fontface = "bold",
+            color = "black",
+            show.legend = FALSE,
+            na.rm = TRUE) +
+  scale_color_gradient(low = "#9e9ac8", high = "#3f007d") +
+  scale_fill_gradient(low = "#9e9ac8", high = "#3f007d") +
+  coord_flip() +
+  scale_x_discrete(breaks = NULL) + #removes the NA line and study names
+  labs(y = "") +
+  theme_gofer(line_plot = TRUE)
+
+## Prepare sex data
+data_sex <- data_gofer %>%
+  tidyr::unnest_legacy() %>%
+  dplyr::select(study, gender) %>%
+  filter(!is.na(gender)) %>%
+  dplyr::rename(sex = gender) %>%
+  dplyr::count(study, sex) %>%
+  dplyr::group_by(study) %>%
+  dplyr::arrange(dplyr::desc(study)) %>%
+  dplyr::mutate(percentage = proportions(n)) %>%
+  dplyr::as_tibble() |>
+  dplyr::add_row(study = NA)
+
+# Create sex plot
+p_sex <- data_sex %>%
+  ggplot(aes(x = study, y = percentage, fill = sex, label = scales::percent(percentage, accuracy =1))) +
+  geom_col(position = 'stack', width = 0.4, na.rm = TRUE) +
+  geom_text(position = position_stack(vjust = 0.45),  # Use position_stack
+            color = "white",
+            size = 2.5,
+            fontface = "bold",
+            na.rm = TRUE) +
+  geom_text(data = filter(data_sex, sex == 'male'),
+            aes(x = study, y = 0, label = "M"),
+            y = -0.075,
+            size = 4,
+            fontface = "bold",
+            color = "black",
+            na.rm = TRUE) +
+  geom_text(data = filter(data_sex, sex == 'female'),
+            aes(x = study, y = 0, label = "F"),
+            y = 1.075,
+            size = 4,
+            fontface = "bold",
+            color = "black",
+            na.rm = TRUE) +
+  scale_x_discrete(breaks = NULL) +
+  scale_fill_manual(values = c("#6a51a3", "#9e9ac8")) +
+  geom_text(aes(x = NA, y = 0.5),
+            label = "Sex",
+            size = 3,
+            fontface = "bold",
+            show.legend = FALSE,
+            na.rm = TRUE) +
+  coord_flip(ylim = c(-.1, 1.1)) + # ylim creates a buffer for the "M" and "F"
+  theme_gofer(line_plot = FALSE)
+
+
+# Create title panels with rounded rectangles
+t_study <- title_panel("Study", "purple")
+t_sample <- title_panel("Sample", "#fe9929")
+t_char <- title_panel("Demographics", "#807dba")
+
+layout <- c(
+  area(t = 1, l = 1, b = 1, r = 1), # t_study
+  area(t = 1, l = 2, b = 1, r = 4), # t_sample
+  area(t = 1, l = 5, b = 1, r = 8), # t_char
+  area(t = 2, l = 1, b = 50, r = 8), # p_gap_grid studies 
+  area(t = 2, l = 1, b = 50, r = 1), # p_studies
+  area(t = 2, l = 2, b = 50, r = 8), # p_grid 
+  area(t = 2, l = 2, b = 50, r = 4), # p_sample
+  area(t = 2, l = 5, b = 50, r = 6), # p_age
+  area(t = 2, l = 7, b = 50, r = 8)  # p_sex
+)
+
+t_study + 
+  t_sample +
+  t_char + 
+  p_gap_grid +
+  p_studies +
+  p_grid +
+  p_sample +
+  p_age +
+  p_sex +
+    #plot_annotation(
+    #title = 'For another time',
+    #caption = 'Probably...') +
+  plot_layout(nrow = 1, design = layout, guides = "keep")  
+
+```
+
+
+
+# Session info
+
+::: {.callout-note collapse="true"}
+## Expand To Learn About **session info**
+
+```{r}
+sessionInfo() 
+```
+:::
